@@ -47,6 +47,7 @@ public class ExtractionTask {
             }
         }
         m_logger.println_success("Extraction phase complete");
+        m_logger.println_verbose("Install directory is "+m_installDir.getAbsolutePath());
         return m_installDir;
     }
 

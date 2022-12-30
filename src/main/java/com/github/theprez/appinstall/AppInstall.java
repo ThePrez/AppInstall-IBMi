@@ -1,5 +1,6 @@
 package com.github.theprez.appinstall;
 
+import java.beans.PropertyVetoException;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.Arrays;
@@ -9,9 +10,10 @@ import java.util.NoSuchElementException;
 import com.github.theprez.jcmdutils.AppLogger;
 import com.github.theprez.jcmdutils.StringUtils;
 import com.github.theprez.jcmdutils.StringUtils.TerminalColor;
+import com.ibm.as400.access.ObjectDoesNotExistException;
 
 public class AppInstall {
-    private static void doBuild(final AppLogger _logger, final LinkedList<String> _args) throws IOException, URISyntaxException {
+    private static void doBuild(final AppLogger _logger, final LinkedList<String> _args) throws IOException, URISyntaxException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
         String arg = "";
         try {
             final InstallPackageBuilder builder = new InstallPackageBuilder(_logger);
@@ -34,22 +36,17 @@ public class AppInstall {
                 }
             }
             builder.build();
-            _logger.println_success("Successfully created installation package");
         } catch (final NoSuchElementException e) {
             _logger.printfln_err("ERROR: Argument '%s' specified without value", arg);
         }
     }
 
-    private static void doInstall(final AppLogger _logger) {
-        try {
+    private static void doInstall(final AppLogger _logger, boolean _yesMode) throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
             _logger.println("Doing the installation");
             final PackageConfiguration config = new PackageConfiguration(_logger);
             final ExtractionTask extraction = new ExtractionTask(_logger, config);
             final InstallationTask install = new InstallationTask(_logger, config, extraction.run());
-            install.run();
-        } catch (final Exception e) {
-            _logger.exception(e);
-        }
+            install.run(_yesMode);
     }
 
     private static boolean isInstallPackage() {
@@ -66,7 +63,7 @@ public class AppInstall {
                 printVersionInfo(logger);
                 System.exit(0);
             } else if (isInstallPackage()) {
-                doInstall(logger);
+                doInstall(logger, args.remove("-y"));
             } else {
                 doBuild(logger, args);
             }
@@ -79,7 +76,7 @@ public class AppInstall {
     private static void printUsageAndExit() {
         System.out.println("");
         if (isInstallPackage()) {
-            System.out.println("Usage: java -jar <jarfile> [-v]");
+            System.out.println("Usage: java -jar <jarfile> [-v] [-y]");
             System.exit(-1);
         }
         System.out.println("Usage: java -jar <jarfile> -o <package_file> [options] [[component]...]");

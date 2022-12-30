@@ -1,5 +1,6 @@
 package com.github.theprez.appinstall;
 
+import java.beans.PropertyVetoException;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -38,15 +39,23 @@ import com.ibm.as400.access.AS400Message;
 import com.ibm.as400.access.AS400SecurityException;
 import com.ibm.as400.access.CommandCall;
 import com.ibm.as400.access.ErrorCompletingRequestException;
+import com.ibm.as400.access.Job;
+import com.ibm.as400.access.JobLog;
+import com.ibm.as400.access.ObjectDoesNotExistException;
+import com.ibm.as400.access.QueuedMessage;
 
 public class InstallPackageBuilder {
-    static void runCommand(final AppLogger _logger, final AS400 _as400, final String _cmd) throws IOException { // TODO: where should this
+    static synchronized void runCommand(final AppLogger _logger, final AS400 _as400, final String _cmd, final boolean _isOkToFail) throws IOException, ObjectDoesNotExistException, PropertyVetoException { // TODO: where should this
         // live?
         try {
             _logger.printfln_verbose("Running CL command '%s'", _cmd);
-            final CommandCall cmd = new CommandCall(_as400, _cmd);
+            final CommandCall cmd = new CommandCall(_as400);
             cmd.setMessageOption(AS400Message.MESSAGE_OPTION_ALL);
-            final boolean isSuccess = cmd.run();
+            cmd.getServerJob().setLoggingCLPrograms(Job.LOG_CL_PROGRAMS_YES);
+            JobLog jobLog = cmd.getServerJob().getJobLog();
+            jobLog.load();
+            int jobLogPos = jobLog.getLength();
+            final boolean isSuccess = cmd.run(_cmd);
 
             final AS400Message[] msgs = cmd.getMessageList();
             for (final AS400Message msg : msgs) {
@@ -55,14 +64,19 @@ public class InstallPackageBuilder {
                 }
             }
             try {
-                final List<Object> jobLogMsgs = Collections.list(cmd.getServerJob().getJobLog().getMessages());
-                for (final Object jobLogMsg : jobLogMsgs) {
-                    _logger.printfln_verbose("--> %s", jobLogMsg.toString());
+                jobLog = cmd.getServerJob().getJobLog();
+                jobLog.load();
+                final QueuedMessage[] jobLogMsgs = jobLog.getMessages(jobLogPos, jobLog.getLength());
+                for (final QueuedMessage jobLogMsg : jobLogMsgs) {
+                    if(AS400Message.INFORMATIONAL == jobLogMsg.getType()) {
+                        continue;
+                    }
+                    _logger.printfln("    %s: %s", jobLogMsg.getID(), jobLogMsg.getText());
                 }
             } catch (final Exception e) {
                 _logger.exception(e);
             }
-            if (!isSuccess) {
+            if (!isSuccess && !_isOkToFail) {
                 throw new IOException("Error running command");
             }
         } catch (AS400SecurityException | ErrorCompletingRequestException | InterruptedException e) {
@@ -132,7 +146,7 @@ public class InstallPackageBuilder {
         m_libraries.add(trimmedUpper);
     }
 
-    public void build() throws IOException, URISyntaxException {
+    public void build() throws IOException, URISyntaxException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
         if (null == m_outputFile) {
             throw new IOException("Output file not specified");
         } // TODO: check if exists
@@ -146,12 +160,16 @@ public class InstallPackageBuilder {
 
         // package up stream files
         if (!m_files.isEmpty()) {
+            m_logger.println("Saving stream files...");
             final File tarFile = new File(m_dir, "files.tar");
             boolean isCreating = true;
             for (final File file : m_files) {
                 m_logger.printfln_verbose("Packaging file '%s'...", file.getAbsolutePath());
                 final Process p = Runtime.getRuntime().exec(new String[] { "/QOpenSys/usr/bin/tar", "-D", isCreating ? "-cvf" : "-uvf", tarFile.getName(), file.getAbsolutePath() }, new String[] { "QIBM_PASE_DESCRIPTOR_STDIO=B" }, m_dir);
                 ProcessLauncher.pipeStreamsToCurrentProcess("TAR", p, m_logger);
+                if(0 !=p.waitFor()) {
+                    throw new IOException("Error packaging stream files");
+                }
                 isCreating = false;
             }
             manifestFiles.add(tarFile.getName());
@@ -164,10 +182,10 @@ public class InstallPackageBuilder {
         try {
             for (final String library : m_libraries) {
                 m_logger.printfln("Saving library %s...", library);
-                runCommand(as400, "CRTSAVF QTEMP/" + library);
-                runCommand(as400, "SAVLIB LIB(" + library + ") DEV(*SAVF) SAVF(QTEMP/" + library + ")");
+                runCommand(as400, "CRTSAVF QTEMP/" + library, false);
+                runCommand(as400, "SAVLIB LIB(" + library + ") DEV(*SAVF) SAVF(QTEMP/" + library + ")", false);
                 final File stmf = new File(m_dir, library + ".lib");
-                runCommand(as400, "CPYTOSTMF FROMMBR('/qsys.lib/qtemp.lib/" + library + ".file') TOSTMF('" + stmf.getAbsolutePath() + "') CVTDTA(*NONE) ENDLINFMT(*FIXED)");
+                runCommand(as400, "CPYTOSTMF FROMMBR('/qsys.lib/qtemp.lib/" + library + ".file') TOSTMF('" + stmf.getAbsolutePath() + "') CVTDTA(*NONE) ENDLINFMT(*FIXED)", false);
                 manifestFiles.add(stmf.getName());
                 manifestCommands.add("CRTSAVF QTEMP/" + library);
                 manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + stmf.getName() + "') TOMBR('/qsys.lib/qtemp.lib/" + library + ".file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
@@ -227,8 +245,8 @@ public class InstallPackageBuilder {
         }
     }
 
-    private void runCommand(final AS400 _as400, final String _cmd) throws IOException {
-        runCommand(m_logger, _as400, _cmd);
+    private void runCommand(final AS400 _as400, final String _cmd, final boolean _isOkToFail) throws IOException, ObjectDoesNotExistException, PropertyVetoException {
+        runCommand(m_logger, _as400, _cmd, _isOkToFail);
     }
 
     public void setOutputFile(final String _f) throws IOException {

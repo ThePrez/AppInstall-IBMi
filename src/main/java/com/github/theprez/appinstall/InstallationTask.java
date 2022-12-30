@@ -1,13 +1,21 @@
 package com.github.theprez.appinstall;
 
+import java.beans.PropertyVetoException;
 import java.io.File;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.util.LinkedList;
+import java.util.List;
 
 import com.github.theprez.jcmdutils.AppLogger;
+import com.github.theprez.jcmdutils.ConsoleQuestionAsker;
 import com.github.theprez.jcmdutils.AppLogger.DefaultLogger;
+import com.github.theprez.jcmdutils.ProcessLauncher.ProcessResult;
+import com.github.theprez.jcmdutils.StringUtils.TerminalColor;
 import com.github.theprez.jcmdutils.ProcessLauncher;
 import com.github.theprez.jcmdutils.StringUtils;
 import com.ibm.as400.access.AS400;
+import com.ibm.as400.access.ObjectDoesNotExistException;
 
 public class InstallationTask {
 
@@ -21,7 +29,7 @@ public class InstallationTask {
         m_config = _config;
     }
 
-    public void run() throws IOException, InterruptedException {
+    public void run(boolean _yesMode) throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
         final DefaultLogger childLogger = new DefaultLogger(true);
         {
             final File preinstall = new File(m_dir, ".preinstall");
@@ -40,16 +48,17 @@ public class InstallationTask {
         final AS400 as400 = new AS400("localhost", "*CURRENT", "*CURRENT");
         try {
             m_logger.println("Performing installation...");
-            for (final String cmd : m_config.getCommands()) {
+            for (final String cmd : inferCommandsFromFileList(m_config.getFiles(), _yesMode)) {
                 if (StringUtils.isEmpty(cmd)) {
                     continue;
                 }
                 if (Character.isUpperCase(cmd.trim().charAt(0))) { // CL command
                     final String doctoredCmd = cmd.replace("$PWD", m_dir.getAbsolutePath());
-                    InstallPackageBuilder.runCommand(m_logger, as400, doctoredCmd);
+                    InstallPackageBuilder.runCommand(m_logger, as400, doctoredCmd, cmd.trim().toUpperCase().startsWith("DLT"));
                 } else {
                     m_logger.printfln_verbose("Running command '%s'", cmd);
-                    final Process p = Runtime.getRuntime().exec(new String[] { "/QOpenSys/usr/bin/sh", "-c", cmd }, null, m_dir);
+                    final Process p = Runtime.getRuntime().exec(new String[] { "/QOpenSys/usr/bin/sh", "-c", cmd },
+                            null, m_dir);
                     ProcessLauncher.pipeStreamsToCurrentProcess("INSTALL", p, childLogger);
                     p.waitFor();
                     if (0 != p.exitValue()) {
@@ -76,6 +85,63 @@ public class InstallationTask {
             m_logger.println_success("Successfully executed post-installation tasks");
         }
         m_logger.println_success("Installation complete");
+    }
+
+    private List<String> inferCommandsFromFileList(List<String> files, boolean _yesMode)
+            throws UnsupportedEncodingException, IOException {
+        List<String> manifestCommands = new LinkedList<String>();
+        String confirmationMsg = "\n\n\nIf you continue, the following actions will be taken on your system:\n\n";
+        for (String file : files) {
+            if (file.endsWith(".tar")) {
+                File tarFile = new File(m_dir, file);
+                final String untarCmd = "/QOpenSys/usr/bin/tar xvf " + tarFile.getAbsolutePath() + " -C /.";
+                manifestCommands.add(untarCmd);
+                ProcessResult tarlist = ProcessLauncher.exec("/QOpenSys/usr/bin/tar tvf " + tarFile.getAbsolutePath());
+                if (0 != tarlist.getExitStatus()) {
+                    throw new IOException("Error processing saved stream file data");
+                }
+                confirmationMsg += StringUtils.colorizeForTerminal("  - The following stream files will be installed:\n", TerminalColor.YELLOW);
+                for (String line : tarlist.getStdout()) {
+                    confirmationMsg += "        " + StringUtils.colorizeForTerminal(line, TerminalColor.CYAN) + "\n";
+                }
+                confirmationMsg += "\n";
+            } else if (file.endsWith(".lib")) {
+                String library = file.replace(".lib", "").trim();
+                if (libraryExists(library)) {
+                    confirmationMsg += 
+                            StringUtils.colorizeForTerminal("  - Library "+library.toUpperCase()+" will be deleted from the system",
+                                    TerminalColor.BRIGHT_RED)+
+                            " and replaced with the version included in this bundle\n\n";
+                } else {
+                    confirmationMsg += 
+                            StringUtils.colorizeForTerminal("  - Library "+library.toUpperCase()+
+                            " will be installed on the system\n\n", TerminalColor.YELLOW) ;
+                }
+
+                manifestCommands.add("CRTSAVF QTEMP/" + library);
+                manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + file + "') TOMBR('/qsys.lib/qtemp.lib/" + library
+                        + ".file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
+                manifestCommands.add("DLTLIB " + library);
+                manifestCommands.add("RSTLIB SAVLIB(" + library + ") DEV(*SAVF) SAVF(QTEMP/" + library
+                        + ") MBROPT(*ALL) ALWOBJDIF(*ALL) RSTLIB(" + library + ")");
+
+            }
+        }
+        System.out.println(confirmationMsg);
+        if (_yesMode) {
+            m_logger.println_warn("Continuing without confirmation");
+        } else{
+            ConsoleQuestionAsker asker = new ConsoleQuestionAsker();
+            boolean reply = asker.askBooleanQuestion(m_logger, "N", "Are you sure you want to proceed? (y/N)", null);
+            if (!reply) {
+                throw new IOException("Canceled by user");
+            }
+        }
+        return manifestCommands;
+    }
+
+    private static boolean libraryExists(String _library) {
+        return new File("/qsys.lib/" + _library + ".lib").exists();
     }
 
 }
