@@ -19,7 +19,7 @@ jobs:
         distribution: 'temurin'
         cache: maven
     - name: Build with Make
-      run: gmake appinstall-v${{ github.ref_name }}.jar
+      run: gmake appinstall-${{ github.ref_name }}.jar
     - name: Create the release
       id: create_release
       uses: actions/create-release@v1
@@ -37,6 +37,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps 
-        asset_path: ./appinstall-v${{ github.ref_name }}.jar
-        asset_name: appinstall-v${{ github.ref_name }}.jar
+        asset_path: ./appinstall-${{ github.ref_name }}.jar
+        asset_name: appinstall-${{ github.ref_name }}.jar
         asset_content_type: application/zip
