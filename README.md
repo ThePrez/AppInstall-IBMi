@@ -5,7 +5,7 @@ Universal application installer for IBM i
 
 To build an application installation image:
 ```fortran
-Usage: java -jar <jarfile> -o <package_file> [options] [[component]...]
+Usage: java -jar appinstall-ibmi-xxx.jar -o <package_file> [options] [[component]...]
 
   <package_file> is the file name of the build package you are creating
     (.jar file extension is preferred)
