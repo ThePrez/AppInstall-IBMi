@@ -14,7 +14,6 @@ import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -131,7 +130,6 @@ public class InstallPackageBuilder {
     }
 
     public void addFromSpecFile(final AppLogger _logger, final String _specFile) throws UnsupportedEncodingException, FileNotFoundException, IOException {
-        final String line = "";
         try (BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(_specFile), "UTF-8"))) {
             throw new IOException("not implemented");
         }
@@ -178,7 +176,7 @@ public class InstallPackageBuilder {
         }
 
         // package up libraries
-        final AS400 as400 = new AS400("localhost", "*CURRENT", "*CURRENT");
+        final AS400 as400 = new AS400("localhost", "*CURRENT");
         try {
             for (final String library : m_libraries) {
                 m_logger.printfln("Saving library %s...", library);

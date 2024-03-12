@@ -24,5 +24,13 @@ Usage: java -jar <jarfile> -o <package_file> [options] [[component]...]
         --spec <file>      : a specification file listing application components
 ```
 
+
 The resulting file is a runnable `.jar` file that will install the application!
+```fortran
+Usage: java -jar <package_file> [option]
+   Valid option is either:
+        -y         : automatically reply 'Y' to all confirmation (install/delete) messages
+        -c         : automatically reply 'Y' to all non-destructive (install) confirmation messages
+``` 
+
 

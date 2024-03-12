@@ -29,7 +29,7 @@ public class InstallationTask {
         m_config = _config;
     }
 
-    public void run(boolean _yesMode) throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
+    public void run(char _confirm) throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
         final DefaultLogger childLogger = new DefaultLogger(true);
         {
             final File preinstall = new File(m_dir, ".preinstall");
@@ -45,10 +45,10 @@ public class InstallationTask {
                 m_logger.println_success("Successfully executed pre-installation tasks");
             }
         }
-        final AS400 as400 = new AS400("localhost", "*CURRENT", "*CURRENT");
+        final AS400 as400 = new AS400("localhost", "*CURRENT");
         try {
             m_logger.println("Performing installation...");
-            for (final String cmd : inferCommandsFromFileList(m_config.getFiles(), _yesMode)) {
+            for (final String cmd : inferCommandsFromFileList(m_config.getFiles(), _confirm)) {
                 if (StringUtils.isEmpty(cmd)) {
                     continue;
                 }
@@ -87,7 +87,11 @@ public class InstallationTask {
         m_logger.println_success("Installation complete");
     }
 
-    private List<String> inferCommandsFromFileList(List<String> files, boolean _yesMode)
+    /**
+     * @param files
+     * @param _confirm Specify 'y' to always confirm, specify 'c' to confirm only non-delete actions
+     */
+    private List<String> inferCommandsFromFileList(List<String> files, char _confirm)
             throws UnsupportedEncodingException, IOException {
         List<String> manifestCommands = new LinkedList<String>();
         String confirmationMsg = "\n\n\nIf you continue, the following actions will be taken on your system:\n\n";
@@ -128,11 +132,11 @@ public class InstallationTask {
             }
         }
         System.out.println(confirmationMsg);
-        if (_yesMode) {
+        if (_confirm=='y' || (_confirm=='c' && !confirmationMsg.contains("delete"))) {
             m_logger.println_warn("Continuing without confirmation");
         } else{
             ConsoleQuestionAsker asker = new ConsoleQuestionAsker();
-            boolean reply = asker.askBooleanQuestion(m_logger, "N", "Are you sure you want to proceed? (y/N)", null);
+            boolean reply = asker.askBooleanQuestion(m_logger, "N", "Are you sure you want to proceed? (y/N)", (Object)null);
             if (!reply) {
                 throw new IOException("Canceled by user");
             }

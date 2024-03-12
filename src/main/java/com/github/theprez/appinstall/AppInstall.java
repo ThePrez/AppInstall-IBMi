@@ -41,12 +41,12 @@ public class AppInstall {
         }
     }
 
-    private static void doInstall(final AppLogger _logger, boolean _yesMode) throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
+    private static void doInstall(final AppLogger _logger, char _confirm) throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
             _logger.println("Doing the installation");
             final PackageConfiguration config = new PackageConfiguration(_logger);
             final ExtractionTask extraction = new ExtractionTask(_logger, config);
             final InstallationTask install = new InstallationTask(_logger, config, extraction.run());
-            install.run(_yesMode);
+            install.run(_confirm);
     }
 
     private static boolean isInstallPackage() {
@@ -63,7 +63,9 @@ public class AppInstall {
                 printVersionInfo(logger);
                 System.exit(0);
             } else if (isInstallPackage()) {
-                doInstall(logger, args.remove("-y"));
+            	// Allow either -y='yes to all ' or -c 'continue if not delete'
+            	char confirm= args.remove("-y") ? 'y' : args.remove("-c") ? 'c' : ' ';
+                doInstall(logger, confirm);
             } else {
                 doBuild(logger, args);
             }
