@@ -98,6 +98,7 @@ public class InstallPackageBuilder {
     private final AppLogger m_logger;
 
     private File m_outputFile = null;
+	private String m_lodrunLib;
 
     public InstallPackageBuilder(final AppLogger _logger) {
         m_logger = _logger;
@@ -144,6 +145,10 @@ public class InstallPackageBuilder {
         m_libraries.add(trimmedUpper);
     }
 
+    public void setLodrunLib(final AppLogger _logger, final String _lib) {
+    	m_lodrunLib = _lib;
+    }
+
     public void build() throws IOException, URISyntaxException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
         if (null == m_outputFile) {
             throw new IOException("Output file not specified");
@@ -171,25 +176,52 @@ public class InstallPackageBuilder {
                 isCreating = false;
             }
             manifestFiles.add(tarFile.getName());
-            final String untarCmd = "/QOpenSys/usr/bin/tar xvf files.tar -C /.";
-            manifestCommands.add(untarCmd);
+            // Assume lodrun installs files
+            if (m_lodrunLib==null) {
+            	final String untarCmd = "/QOpenSys/usr/bin/tar xvf files.tar -C /.";
+	            manifestCommands.add(untarCmd);
+            }
         }
 
-        // package up libraries
-        final AS400 as400 = new AS400("localhost", "*CURRENT");
+        final AS400 as400 = new AS400();
         try {
+            // package up libraries
             for (final String library : m_libraries) {
                 m_logger.printfln("Saving library %s...", library);
                 runCommand(as400, "CRTSAVF QTEMP/" + library, false);
                 runCommand(as400, "SAVLIB LIB(" + library + ") DEV(*SAVF) SAVF(QTEMP/" + library + ")", false);
                 final File stmf = new File(m_dir, library + ".lib");
-                runCommand(as400, "CPYTOSTMF FROMMBR('/qsys.lib/qtemp.lib/" + library + ".file') TOSTMF('" + stmf.getAbsolutePath() + "') CVTDTA(*NONE) ENDLINFMT(*FIXED)", false);
+                runCommand(as400, "CPYTOSTMF FROMMBR('/qsys.lib/qtemp.lib/" + library + ".file') TOSTMF('" + stmf.getAbsolutePath() + "') STMFOPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED)", false);
                 manifestFiles.add(stmf.getName());
+                
                 manifestCommands.add("CRTSAVF QTEMP/" + library);
                 manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + stmf.getName() + "') TOMBR('/qsys.lib/qtemp.lib/" + library + ".file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
-                // TODO: conditionally DLTLIB first
-                manifestCommands.add("DLTLIB " + library);
-                manifestCommands.add("RSTLIB SAVLIB(" + library + ") DEV(*SAVF) SAVF(QTEMP/" + library + ") MBROPT(*ALL) ALWOBJDIF(*ALL) RSTLIB(" + library + ")");
+                // Assume lodrun installs libraries
+                if (m_lodrunLib==null) {
+	                // TODO: conditionally DLTLIB first
+	                manifestCommands.add("DLTLIB " + library);
+	                manifestCommands.add("RSTLIB SAVLIB(" + library + ") DEV(*SAVF) SAVF(QTEMP/" + library + ") MBROPT(*ALL) ALWOBJDIF(*ALL) RSTLIB(" + library + ")");
+                }
+            }
+            
+            // Create LODRUN QINSTAPP save file
+            if (m_lodrunLib != null) {
+                m_logger.printfln("Creating QINSTAPP save file...");
+                runCommand(as400, "CRTSAVF QTEMP/QINSTAPP", false);
+            	// SAVOBJ/RSTOBJ QINSTAPP to QTEMP if needed (instead of CRTDUPOBJ to preserve attributes)
+                if (!"QTEMP".equalsIgnoreCase(m_lodrunLib)) {
+                    runCommand(as400, "SAVOBJ OBJ(QINSTAPP) OBJTYPE(*PGM) DEV(*SAVF) SAVF(QTEMP/QINSTAPP) LIB(" + m_lodrunLib + ')', false);
+                    runCommand(as400, "RSTOBJ OBJ(QINSTAPP) OBJTYPE(*PGM) DEV(*SAVF) SAVF(QTEMP/QINSTAPP) RSTLIB(QTEMP) ALWOBJDIF(*ALL) MBROPT(*ALL) SAVLIB(" + m_lodrunLib + ')', false);
+                    runCommand(as400, "CLRSAVF QTEMP/QINSTAPP", false);
+                }
+                runCommand(as400, "SAVOBJ OBJ(QINSTAPP) OBJTYPE(*PGM) DEV(*SAVF) SAVF(QTEMP/QINSTAPP) LIB(QTEMP)", false);;
+                final File stmf = new File(m_dir, "qinstapp.pgm");
+                runCommand(as400, "CPYTOSTMF FROMMBR('/qsys.lib/qtemp.lib/qinstapp.file') TOSTMF('" + stmf.getAbsolutePath() + "') CVTDTA(*NONE) ENDLINFMT(*FIXED)", false);
+                manifestFiles.add(stmf.getName());
+                
+                manifestCommands.add("CRTSAVF QTEMP/QINSTAPP");
+                manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + stmf.getName() + "') TOMBR('/qsys.lib/qtemp.lib/qinstapp.file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
+                manifestCommands.add("LODRUN DEV(*SAVF) SAVF(QTEMP/QINSTAPP)");
             }
         } finally {
             as400.disconnectAllServices();

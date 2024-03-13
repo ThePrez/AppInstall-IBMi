@@ -29,7 +29,7 @@ public class InstallationTask {
         m_config = _config;
     }
 
-    public void run(char _confirm) throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
+    public void run(InstallOptions installOptions) throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
         final DefaultLogger childLogger = new DefaultLogger(true);
         {
             final File preinstall = new File(m_dir, ".preinstall");
@@ -45,10 +45,10 @@ public class InstallationTask {
                 m_logger.println_success("Successfully executed pre-installation tasks");
             }
         }
-        final AS400 as400 = new AS400("localhost", "*CURRENT");
+        final AS400 as400 = new AS400();
         try {
             m_logger.println("Performing installation...");
-            for (final String cmd : inferCommandsFromFileList(m_config.getFiles(), _confirm)) {
+            for (final String cmd : inferCommandsFromFileList(m_config.getFiles(), installOptions)) {
                 if (StringUtils.isEmpty(cmd)) {
                     continue;
                 }
@@ -91,11 +91,12 @@ public class InstallationTask {
      * @param files
      * @param _confirm Specify 'y' to always confirm, specify 'c' to confirm only non-delete actions
      */
-    private List<String> inferCommandsFromFileList(List<String> files, char _confirm)
+    private List<String> inferCommandsFromFileList(List<String> files, InstallOptions installOptions)
             throws UnsupportedEncodingException, IOException {
         List<String> manifestCommands = new LinkedList<String>();
         String confirmationMsg = "\n\n\nIf you continue, the following actions will be taken on your system:\n\n";
         for (String file : files) {
+        	// Restore file action
             if (file.endsWith(".tar")) {
                 File tarFile = new File(m_dir, file);
                 final String untarCmd = "/QOpenSys/usr/bin/tar xvf " + tarFile.getAbsolutePath() + " -C /.";
@@ -109,30 +110,46 @@ public class InstallationTask {
                     confirmationMsg += "        " + StringUtils.colorizeForTerminal(line, TerminalColor.CYAN) + "\n";
                 }
                 confirmationMsg += "\n";
+            // Restore library action
             } else if (file.endsWith(".lib")) {
-                String library = file.replace(".lib", "").trim();
-                if (libraryExists(library)) {
+                String savlib = file.replace(".lib", "").trim();
+                String rstlib = installOptions.rstlib != null ? installOptions.rstlib : savlib;
+                if (!installOptions.lodrun && libraryExists(rstlib)) {
                     confirmationMsg += 
-                            StringUtils.colorizeForTerminal("  - Library "+library.toUpperCase()+" will be deleted from the system",
+                            StringUtils.colorizeForTerminal("  - Library "+rstlib.toUpperCase()+" will be deleted from the system",
                                     TerminalColor.BRIGHT_RED)+
                             " and replaced with the version included in this bundle\n\n";
                 } else {
                     confirmationMsg += 
-                            StringUtils.colorizeForTerminal("  - Library "+library.toUpperCase()+
+                            StringUtils.colorizeForTerminal("  - Library "+rstlib.toUpperCase()+
                             " will be installed on the system\n\n", TerminalColor.YELLOW) ;
                 }
 
-                manifestCommands.add("CRTSAVF QTEMP/" + library);
-                manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + file + "') TOMBR('/qsys.lib/qtemp.lib/" + library
+                manifestCommands.add("CRTSAVF QTEMP/" + savlib);
+                manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + file + "') TOMBR('/qsys.lib/qtemp.lib/" + savlib
                         + ".file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
-                manifestCommands.add("DLTLIB " + library);
-                manifestCommands.add("RSTLIB SAVLIB(" + library + ") DEV(*SAVF) SAVF(QTEMP/" + library
-                        + ") MBROPT(*ALL) ALWOBJDIF(*ALL) RSTLIB(" + library + ")");
-
+                if (!installOptions.lodrun) {
+	                manifestCommands.add("DLTLIB " + rstlib);
+	                String rstlibCmd = "RSTLIB SAVLIB(" + savlib + ") DEV(*SAVF) SAVF(QTEMP/" + savlib
+	                        + ") MBROPT(*ALL) ALWOBJDIF(*ALL) RSTLIB(" + rstlib + ')';
+	                if (installOptions.rstasp != null)
+	                	rstlibCmd += " RSTASP(" + installOptions.rstasp + ')';
+	                if (installOptions.rstaspdev != null)
+	                	rstlibCmd += " RSTASPDEV(" + installOptions.rstaspdev + ')';
+	                manifestCommands.add(rstlibCmd);
+                }
+            // LODRUN action
+            } else if (file.equals("qinstapp.pgm")) {
+            	if (installOptions.lodrun) {
+	            	confirmationMsg += StringUtils.colorizeForTerminal("  - LODRUN DEV(*SAVF) SAVF(QTEMP/QINSTAPP) will be run:\n", TerminalColor.YELLOW);
+	                manifestCommands.add("CRTSAVF QTEMP/QINSTAPP");
+	                manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + file + "') TOMBR('/qsys.lib/qtemp.lib/qinstapp.file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
+	                manifestCommands.add("LODRUN DEV(*SAVF) SAVF(QTEMP/QINSTAPP)");
+            	}
             }
         }
         System.out.println(confirmationMsg);
-        if (_confirm=='y' || (_confirm=='c' && !confirmationMsg.contains("delete"))) {
+        if (installOptions.confirm=='y' || (installOptions.confirm=='c' && !confirmationMsg.contains("delete"))) {
             m_logger.println_warn("Continuing without confirmation");
         } else{
             ConsoleQuestionAsker asker = new ConsoleQuestionAsker();

@@ -29,6 +29,8 @@ public class AppInstall {
                     builder.addFile(_args.removeFirst());
                 } else if ("--spec".equalsIgnoreCase(arg)) {
                     builder.addFromSpecFile(_logger, _args.removeFirst());
+                } else if ("--lodrun".equalsIgnoreCase(arg)) {
+                    builder.setLodrunLib(_logger, _args.removeFirst());
                 } else {
                     _logger.println_err("Urecognized argument: " + arg);
                     _logger.println();
@@ -41,12 +43,12 @@ public class AppInstall {
         }
     }
 
-    private static void doInstall(final AppLogger _logger, char _confirm) throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
+    private static void doInstall(final AppLogger _logger, InstallOptions installOptions) throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
             _logger.println("Doing the installation");
             final PackageConfiguration config = new PackageConfiguration(_logger);
             final ExtractionTask extraction = new ExtractionTask(_logger, config);
             final InstallationTask install = new InstallationTask(_logger, config, extraction.run());
-            install.run(_confirm);
+            install.run(installOptions);
     }
 
     private static boolean isInstallPackage() {
@@ -63,9 +65,25 @@ public class AppInstall {
                 printVersionInfo(logger);
                 System.exit(0);
             } else if (isInstallPackage()) {
+            	InstallOptions installOptions = new InstallOptions();
             	// Allow either -y='yes to all ' or -c 'continue if not delete'
-            	char confirm= args.remove("-y") ? 'y' : args.remove("-c") ? 'c' : ' ';
-                doInstall(logger, confirm);
+            	installOptions.confirm = args.remove("-y") ? 'y' : args.remove("-c") ? 'c' : ' ';
+            	installOptions.lodrun = args.remove("-l") || args.remove("--lodrun");
+            	// Allow --rstlib/rstasp/rstaspdev
+                while (!args.isEmpty()) {
+                	String arg = args.removeFirst().toLowerCase();
+                	switch (arg) {
+                		case "--rstlib":
+                			installOptions.rstlib = args.removeFirst();
+                			break;
+                		case "--rstasp":
+                			installOptions.rstasp = args.removeFirst();
+                			break;
+                		case "--rstaspdev":
+                			installOptions.rstaspdev = args.removeFirst();
+                	}
+                }
+                doInstall(logger, installOptions);
             } else {
                 doBuild(logger, args);
             }
