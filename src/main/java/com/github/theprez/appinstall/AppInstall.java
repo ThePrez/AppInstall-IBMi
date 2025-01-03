@@ -99,6 +99,8 @@ public class AppInstall {
         System.out.println("        --qsys <library>   : a library in the QSYS.LIB file system");
         System.out.println("        --dir  <dir>       : a directory (contents are not included)");
         System.out.println("        --file <file/dir>  : a file or directory (if a directory, contents are included)");
+        System.out.println("        --pre  <file>      : a pre-install script (only one can be specified)");
+        System.out.println("        --post <file>      : a post-install script (only one can be specified)");
         System.out.println("        --spec <file>      : a specification file listing application components");
         System.out.println("");
         System.exit(-1);
