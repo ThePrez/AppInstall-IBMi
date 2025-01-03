@@ -19,10 +19,13 @@ Usage: java -jar appinstall-ibmi-xxx.jar -o <package_file> [options] [[component
 
   Multiple components can be specified. These identify components
   of the application for which you are creating an installer.
-   Valid component values include:
-       --qsys <library>   : a library in the QSYS.LIB file system
-       --dir <dir>        : a directory (contents are not included)
-       --file <file/dir>  : a file or directory (if a directory, contents are included)
+    Valid component values include:
+        --qsys <library>   : a library in the QSYS.LIB file system
+        --dir  <dir>        : a directory (contents are not included)
+        --file <file/dir>  : a file or directory (if a directory, contents are included)
+        --pre  <file>      : a pre-install script (only one can be specified)
+        --post <file>      : a post-install script (only one can be specified)
+        --spec <file>      : a specification file listing application components
 ```
 
 

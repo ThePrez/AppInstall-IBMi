@@ -6,6 +6,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 import com.github.theprez.jcmdutils.AppLogger;
@@ -32,8 +34,17 @@ public class ExtractionTask {
         if (!m_installDir.isDirectory()) {
             throw new IOException("Could not create temporary installation directory: " + m_installDir);
         }
+
+        List<String> filesToExtract = new ArrayList<>(m_config.getFiles());
+        if (getClass().getClassLoader().getResourceAsStream("APPINSTALL-DATA/.preinstall") != null) {
+            filesToExtract.add(".preinstall");
+        }
+        if (getClass().getClassLoader().getResourceAsStream("APPINSTALL-DATA/.postinstall") != null) {
+            filesToExtract.add(".postinstall");
+        }
+
         final int bufferSize = 1024 * 512;
-        for (final String fileStr : m_config.getFiles()) {
+        for (final String fileStr : filesToExtract) {
             final File destFile = new File(m_installDir, fileStr);
             m_logger.printfln("Extracting %s...", fileStr);
             try (BufferedInputStream in = new BufferedInputStream(m_logger.getClass().getClassLoader().getResourceAsStream("APPINSTALL-DATA/" + fileStr), bufferSize)) {
