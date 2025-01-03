@@ -14,6 +14,8 @@ import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -93,6 +95,8 @@ public class InstallPackageBuilder {
     }
 
     private final File m_dir;
+    private File m_preInstall;
+    private File m_postInstall;
     private final Set<File> m_files = new TreeSet<File>();
     private final Set<String> m_libraries = new TreeSet<String>();
 
@@ -107,6 +111,35 @@ public class InstallPackageBuilder {
         final File dotDir = new File(homeDir, ".appinstall");
         final File allBuildsDir = new File(dotDir, "builds");
         m_dir = new File(allBuildsDir, installId);
+    }
+
+    public void addPreInstall(final String _f) throws IOException {
+        addInstallStep(_f, true);
+    }
+
+    public void addPostInstall(final String _f) throws IOException {
+        addInstallStep(_f, false);
+    }
+
+    public void addInstallStep(final String _f, boolean isPre) throws IOException {
+        final File f = verifyExists(_f);
+        if (f.isDirectory()) {
+            throw new IOException("'" + f.getAbsolutePath() + "' is a directory");
+        } else {
+            if (isPre) {
+                if (m_preInstall != null) {
+                    throw new IOException("Pre-install script already specified");
+                }
+
+                m_preInstall = f;
+            } else {
+                if (m_postInstall != null) {
+                    throw new IOException("Post-install script already specified");
+                }
+
+                m_postInstall = f;
+            }
+        }
     }
 
     public void addBareDirectory(final String _dir) throws IOException {
@@ -155,8 +188,33 @@ public class InstallPackageBuilder {
         if (!m_dir.isDirectory()) {
             throw new IOException("Could not create temporary installation directory: " + m_dir);
         }
+
+        File preInstall = null;
+        File postInstall = null;
         final List<String> manifestFiles = new LinkedList<String>();
         final List<String> manifestCommands = new LinkedList<String>();
+
+        // package up pre-install script
+        if (m_preInstall != null) {
+            m_logger.println("Saving pre-install script...");
+            preInstall = new File(m_dir, ".preinstall");
+            try {
+                Files.copy(m_preInstall.toPath(), preInstall.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+                throw new IOException("Error packaging pre-install script", e);
+            }
+        }
+
+        // package up post-install script
+        if (m_postInstall != null) {
+            m_logger.println("Saving post-install script...");
+            postInstall = new File(m_dir, ".postinstall");
+            try {
+                Files.copy(m_postInstall.toPath(), postInstall.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+                throw new IOException("Error packaging post-install script", e);
+            }
+        }
 
         // package up stream files
         if (!m_files.isEmpty()) {
@@ -230,6 +288,14 @@ public class InstallPackageBuilder {
             yamlWriter.flush();
             out.closeEntry();
             m_logger.println_verbose("done adding our manifest");
+
+            // add pre/post install scripts
+            if(preInstall != null) {
+                manifestFiles.add(preInstall.getName());
+            }
+            if(postInstall != null) {
+                manifestFiles.add(postInstall.getName());
+            }
 
             // add each file
             for (final String l : manifestFiles) {
