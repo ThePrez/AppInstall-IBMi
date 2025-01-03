@@ -21,6 +21,10 @@ public class AppInstall {
                 arg = _args.removeFirst();
                 if ("-o".equalsIgnoreCase(arg)) {
                     builder.setOutputFile(_args.removeFirst());
+                } else if ("--pre".equalsIgnoreCase(arg)) {
+                    builder.addPreInstall(_args.removeFirst());
+                } else if ("--post".equalsIgnoreCase(arg)) {
+                    builder.addPostInstall(_args.removeFirst());
                 } else if ("--qsys".equalsIgnoreCase(arg)) {
                     builder.addLibrary(_args.removeFirst());
                 } else if ("--dir".equalsIgnoreCase(arg)) {
