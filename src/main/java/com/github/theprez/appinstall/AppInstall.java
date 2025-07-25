@@ -28,9 +28,13 @@ public class AppInstall {
                 } else if ("--qsys".equalsIgnoreCase(arg)) {
                     builder.addLibrary(_args.removeFirst());
                 } else if ("--dir".equalsIgnoreCase(arg)) {
-                    builder.addBareDirectory(_args.removeFirst());
+                    builder.addBareDirectory(_args.removeFirst(), false);
+                } else if ("--dirIfMissing".equalsIgnoreCase(arg)) {
+                    builder.addBareDirectory(_args.removeFirst(), true);
                 } else if ("--file".equalsIgnoreCase(arg)) {
-                    builder.addFile(_args.removeFirst());
+                    builder.addFile(_args.removeFirst(), false);
+                } else if ("--fileIfMissing".equalsIgnoreCase(arg)) {
+                    builder.addFile(_args.removeFirst(), true);
                 } else if ("--spec".equalsIgnoreCase(arg)) {
                     builder.addFromSpecFile(_logger, _args.removeFirst());
                 } else if ("--lodrun".equalsIgnoreCase(arg)) {

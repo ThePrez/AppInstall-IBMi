@@ -4,8 +4,10 @@ import java.beans.PropertyVetoException;
 import java.io.File;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 
 import com.github.theprez.jcmdutils.AppLogger;
 import com.github.theprez.jcmdutils.ConsoleQuestionAsker;
@@ -29,7 +31,8 @@ public class InstallationTask {
         m_config = _config;
     }
 
-    public void run(InstallOptions installOptions) throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
+    public void run(InstallOptions installOptions)
+            throws IOException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
         final DefaultLogger childLogger = new DefaultLogger(true);
         {
             final File preinstall = new File(m_dir, ".preinstall");
@@ -54,7 +57,8 @@ public class InstallationTask {
                 }
                 if (Character.isUpperCase(cmd.trim().charAt(0))) { // CL command
                     final String doctoredCmd = cmd.replace("$PWD", m_dir.getAbsolutePath());
-                    InstallPackageBuilder.runCommand(m_logger, as400, doctoredCmd, cmd.trim().toUpperCase().startsWith("DLT"));
+                    InstallPackageBuilder.runCommand(m_logger, as400, doctoredCmd,
+                            cmd.trim().toUpperCase().startsWith("DLT"));
                 } else {
                     m_logger.printfln_verbose("Running command '%s'", cmd);
                     final Process p = Runtime.getRuntime().exec(new String[] { "/QOpenSys/usr/bin/sh", "-c", cmd },
@@ -89,71 +93,143 @@ public class InstallationTask {
 
     /**
      * @param files
-     * @param _confirm Specify 'y' to always confirm, specify 'c' to confirm only non-delete actions
+     * @param _confirm Specify 'y' to always confirm, specify 'c' to confirm only
+     *                 non-delete actions
      */
     private List<String> inferCommandsFromFileList(List<String> files, InstallOptions installOptions)
             throws UnsupportedEncodingException, IOException {
         List<String> manifestCommands = new LinkedList<String>();
         String confirmationMsg = "\n\n\nIf you continue, the following actions will be taken on your system:\n\n";
         for (String file : files) {
-        	// Restore file action
             if (file.endsWith(".tar")) {
+                // Restore file action
                 File tarFile = new File(m_dir, file);
-                final String untarCmd = "/QOpenSys/usr/bin/tar xvf " + tarFile.getAbsolutePath() + " -C /.";
-                manifestCommands.add(untarCmd);
-                ProcessResult tarlist = ProcessLauncher.exec("/QOpenSys/usr/bin/tar tvf " + tarFile.getAbsolutePath());
-                if (0 != tarlist.getExitStatus()) {
+
+                ProcessResult tarInfolist = ProcessLauncher
+                        .exec("/QOpenSys/usr/bin/tar tvf " + tarFile.getAbsolutePath());
+                if (0 != tarInfolist.getExitStatus()) {
                     throw new IOException("Error processing saved stream file data");
                 }
-                confirmationMsg += StringUtils.colorizeForTerminal("  - The following stream files will be installed:\n", TerminalColor.YELLOW);
-                for (String line : tarlist.getStdout()) {
-                    confirmationMsg += "        " + StringUtils.colorizeForTerminal(line, TerminalColor.CYAN) + "\n";
+                ProcessResult tarPathList = ProcessLauncher
+                        .exec("/QOpenSys/usr/bin/tar tf " + tarFile.getAbsolutePath());
+                if (0 != tarPathList.getExitStatus()) {
+                    throw new IOException("Error processing saved stream file data");
                 }
-                confirmationMsg += "\n";
-            // Restore library action
+
+                List<String> infoList = tarInfolist.getStdout();
+                List<String> pathList = tarPathList.getStdout();
+
+                if (infoList.size() != pathList.size()) {
+                    throw new IOException("Mismatch between tar info and file list outputs");
+                }
+
+                Map<String, String> willInstall = new LinkedHashMap<>();
+                Map<String, String> willNotInstall = new LinkedHashMap<>();
+                Map<String, String> willOverwrite = new LinkedHashMap<>();
+
+                for (int i = 0; i < infoList.size(); i++) {
+                    String info = infoList.get(i);
+                    String path = pathList.get(i);
+
+                    File destFile = new File(path);
+
+                    if (destFile.exists()) {
+                        if (file.endsWith("IfMissing.tar")) {
+                            willNotInstall.put(path, info);
+                        } else {
+                            willOverwrite.put(path, info);
+                        }
+                    } else {
+                        willInstall.put(path, info);
+                    }
+                }
+
+                if (!willInstall.isEmpty()) {
+                    confirmationMsg += StringUtils.colorizeForTerminal(
+                            "  - The following stream files will be installed:\n", TerminalColor.YELLOW);
+                    for (String path : willInstall.values()) {
+                        confirmationMsg += "        " + StringUtils.colorizeForTerminal(path, TerminalColor.CYAN)
+                                + "\n";
+                    }
+                    confirmationMsg += "\n";
+                }
+
+                if (!willOverwrite.isEmpty()) {
+                    confirmationMsg += StringUtils.colorizeForTerminal(
+                            "  - The following stream files will be deleted from the system and replaced with the version included in this bundle:\n",
+                            TerminalColor.BRIGHT_RED);
+                    for (String path : willOverwrite.values()) {
+                        confirmationMsg += "        " + StringUtils.colorizeForTerminal(path, TerminalColor.CYAN)
+                                + "\n";
+                    }
+                    confirmationMsg += "\n";
+                }
+
+                if (!willNotInstall.isEmpty()) {
+                    confirmationMsg += StringUtils.colorizeForTerminal(
+                            "  - The following stream files already exist and will not be installed:\n",
+                            TerminalColor.PURPLE);
+                    for (String path : willNotInstall.values()) {
+                        confirmationMsg += "        " + StringUtils.colorizeForTerminal(path, TerminalColor.CYAN)
+                                + "\n";
+                    }
+                    confirmationMsg += "\n";
+                }
+
+                // Construct untar command
+                String untarCmd = "/QOpenSys/usr/bin/tar xvf " + tarFile.getAbsolutePath() + " -C /.";
+                if (!willNotInstall.isEmpty()) {
+                    for (String path : willInstall.keySet()) {
+                        untarCmd += " " + path;
+                    }
+                }
+                manifestCommands.add(untarCmd);
             } else if (file.endsWith(".lib")) {
+                // Restore library action
                 String savlib = file.replace(".lib", "").trim();
                 String rstlib = installOptions.rstlib != null ? installOptions.rstlib : savlib;
                 if (!installOptions.lodrun && libraryExists(rstlib)) {
-                    confirmationMsg += 
-                            StringUtils.colorizeForTerminal("  - Library "+rstlib.toUpperCase()+" will be deleted from the system",
-                                    TerminalColor.BRIGHT_RED)+
-                            " and replaced with the version included in this bundle\n\n";
+                    confirmationMsg += StringUtils.colorizeForTerminal(
+                            "  - Library " + rstlib.toUpperCase()
+                                    + " will be deleted from the system and replaced with the version included in this bundle\n\n",
+                            TerminalColor.BRIGHT_RED);
                 } else {
-                    confirmationMsg += 
-                            StringUtils.colorizeForTerminal("  - Library "+rstlib.toUpperCase()+
-                            " will be installed on the system\n\n", TerminalColor.YELLOW) ;
+                    confirmationMsg += StringUtils.colorizeForTerminal("  - Library " + rstlib.toUpperCase() +
+                            " will be installed on the system\n\n", TerminalColor.YELLOW);
                 }
 
                 manifestCommands.add("CRTSAVF QTEMP/" + savlib);
                 manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + file + "') TOMBR('/qsys.lib/qtemp.lib/" + savlib
                         + ".file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
                 if (!installOptions.lodrun) {
-	                manifestCommands.add("DLTLIB " + rstlib);
-	                String rstlibCmd = "RSTLIB SAVLIB(" + savlib + ") DEV(*SAVF) SAVF(QTEMP/" + savlib
-	                        + ") MBROPT(*ALL) ALWOBJDIF(*ALL) RSTLIB(" + rstlib + ')';
-	                if (installOptions.rstasp != null)
-	                	rstlibCmd += " RSTASP(" + installOptions.rstasp + ')';
-	                if (installOptions.rstaspdev != null)
-	                	rstlibCmd += " RSTASPDEV(" + installOptions.rstaspdev + ')';
-	                manifestCommands.add(rstlibCmd);
+                    manifestCommands.add("DLTLIB " + rstlib);
+                    String rstlibCmd = "RSTLIB SAVLIB(" + savlib + ") DEV(*SAVF) SAVF(QTEMP/" + savlib
+                            + ") MBROPT(*ALL) ALWOBJDIF(*ALL) RSTLIB(" + rstlib + ')';
+                    if (installOptions.rstasp != null)
+                        rstlibCmd += " RSTASP(" + installOptions.rstasp + ')';
+                    if (installOptions.rstaspdev != null)
+                        rstlibCmd += " RSTASPDEV(" + installOptions.rstaspdev + ')';
+                    manifestCommands.add(rstlibCmd);
                 }
-            // LODRUN action
             } else if (file.equals("qinstapp.pgm")) {
-            	if (installOptions.lodrun) {
-	            	confirmationMsg += StringUtils.colorizeForTerminal("  - LODRUN DEV(*SAVF) SAVF(QTEMP/QINSTAPP) will be run:\n", TerminalColor.YELLOW);
-	                manifestCommands.add("CRTSAVF QTEMP/QINSTAPP");
-	                manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + file + "') TOMBR('/qsys.lib/qtemp.lib/qinstapp.file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
-	                manifestCommands.add("LODRUN DEV(*SAVF) SAVF(QTEMP/QINSTAPP)");
-            	}
+                // LODRUN action
+                if (installOptions.lodrun) {
+                    confirmationMsg += StringUtils.colorizeForTerminal(
+                            "  - LODRUN DEV(*SAVF) SAVF(QTEMP/QINSTAPP) will be run:\n", TerminalColor.YELLOW);
+                    manifestCommands.add("CRTSAVF QTEMP/QINSTAPP");
+                    manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + file
+                            + "') TOMBR('/qsys.lib/qtemp.lib/qinstapp.file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
+                    manifestCommands.add("LODRUN DEV(*SAVF) SAVF(QTEMP/QINSTAPP)");
+                }
             }
         }
         System.out.println(confirmationMsg);
-        if (installOptions.confirm=='y' || (installOptions.confirm=='c' && !confirmationMsg.contains("delete"))) {
+        if (installOptions.confirm == 'y' || (installOptions.confirm == 'c' && !confirmationMsg.contains("delete"))) {
             m_logger.println_warn("Continuing without confirmation");
-        } else{
+        } else {
             ConsoleQuestionAsker asker = new ConsoleQuestionAsker();
-            boolean reply = asker.askBooleanQuestion(m_logger, "N", "Are you sure you want to proceed? (y/N)", (Object)null);
+            boolean reply = asker.askBooleanQuestion(m_logger, "N", "Are you sure you want to proceed? (y/N)",
+                    (Object) null);
             if (!reply) {
                 throw new IOException("Canceled by user");
             }
