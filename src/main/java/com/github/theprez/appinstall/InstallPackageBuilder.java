@@ -16,7 +16,6 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -47,7 +46,11 @@ import com.ibm.as400.access.ObjectDoesNotExistException;
 import com.ibm.as400.access.QueuedMessage;
 
 public class InstallPackageBuilder {
-    static synchronized void runCommand(final AppLogger _logger, final AS400 _as400, final String _cmd, final boolean _isOkToFail) throws IOException, ObjectDoesNotExistException, PropertyVetoException { // TODO: where should this
+    static synchronized void runCommand(final AppLogger _logger, final AS400 _as400, final String _cmd,
+            final boolean _isOkToFail) throws IOException, ObjectDoesNotExistException, PropertyVetoException { // TODO:
+                                                                                                                // where
+                                                                                                                // should
+                                                                                                                // this
         // live?
         try {
             _logger.printfln_verbose("Running CL command '%s'", _cmd);
@@ -70,7 +73,7 @@ public class InstallPackageBuilder {
                 jobLog.load();
                 final QueuedMessage[] jobLogMsgs = jobLog.getMessages(jobLogPos, jobLog.getLength());
                 for (final QueuedMessage jobLogMsg : jobLogMsgs) {
-                    if(AS400Message.INFORMATIONAL == jobLogMsg.getType()) {
+                    if (AS400Message.INFORMATIONAL == jobLogMsg.getType()) {
                         continue;
                     }
                     _logger.printfln("    %s: %s", jobLogMsg.getID(), jobLogMsg.getText());
@@ -98,12 +101,13 @@ public class InstallPackageBuilder {
     private File m_preInstall;
     private File m_postInstall;
     private final Set<File> m_files = new TreeSet<File>();
+    private final Set<File> m_files_if_missing = new TreeSet<File>();
     private final Set<String> m_libraries = new TreeSet<String>();
 
     private final AppLogger m_logger;
 
     private File m_outputFile = null;
-	private String m_lodrunLib;
+    private String m_lodrunLib;
 
     public InstallPackageBuilder(final AppLogger _logger) {
         m_logger = _logger;
@@ -143,28 +147,45 @@ public class InstallPackageBuilder {
         }
     }
 
-    public void addBareDirectory(final String _dir) throws IOException {
+    public void addBareDirectory(final String _dir, boolean ifMissing) throws IOException {
         final File dir = verifyDir(_dir);
-        m_files.add(dir);
-    }
-
-    public void addFile(final File _f) throws IOException {
-        final File f = verifyExists(_f);
-        if (f.isDirectory()) {
-            m_files.add(f);
-            for (final File child : f.listFiles()) {
-                addFile(child);
-            }
+        if (ifMissing) {
+            m_files_if_missing.add(dir);
         } else {
-            m_files.add(f);
+            m_files.add(dir);
         }
     }
 
-    public void addFile(final String _f) throws IOException {
-        addFile(new File(_f));
+    public void addFile(final File _f, boolean ifMissing) throws IOException {
+        final File f = verifyExists(_f);
+        if (f.isDirectory()) {
+            // Add directory
+            if (ifMissing) {
+                m_files_if_missing.add(f);
+            } else {
+                m_files.add(f);
+            }
+
+            // Add files in directory
+            for (final File child : f.listFiles()) {
+                addFile(child, ifMissing);
+            }
+        } else {
+            // Add file
+            if (ifMissing) {
+                m_files_if_missing.add(f);
+            } else {
+                m_files.add(f);
+            }
+        }
     }
 
-    public void addFromSpecFile(final AppLogger _logger, final String _specFile) throws UnsupportedEncodingException, FileNotFoundException, IOException {
+    public void addFile(final String _f, boolean ifMissing) throws IOException {
+        addFile(new File(_f), ifMissing);
+    }
+
+    public void addFromSpecFile(final AppLogger _logger, final String _specFile)
+            throws UnsupportedEncodingException, FileNotFoundException, IOException {
         try (BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(_specFile), "UTF-8"))) {
             throw new IOException("not implemented");
         }
@@ -180,10 +201,11 @@ public class InstallPackageBuilder {
     }
 
     public void setLodrunLib(final AppLogger _logger, final String _lib) {
-    	m_lodrunLib = _lib;
+        m_lodrunLib = _lib;
     }
 
-    public void build() throws IOException, URISyntaxException, InterruptedException, ObjectDoesNotExistException, PropertyVetoException {
+    public void build() throws IOException, URISyntaxException, InterruptedException, ObjectDoesNotExistException,
+            PropertyVetoException {
         if (null == m_outputFile) {
             throw new IOException("Output file not specified");
         } // TODO: check if exists
@@ -221,24 +243,35 @@ public class InstallPackageBuilder {
         }
 
         // package up stream files
-        if (!m_files.isEmpty()) {
-            m_logger.println("Saving stream files...");
-            final File tarFile = new File(m_dir, "files.tar");
-            boolean isCreating = true;
-            for (final File file : m_files) {
-                m_logger.printfln_verbose("Packaging file '%s'...", file.getAbsolutePath());
-                final Process p = Runtime.getRuntime().exec(new String[] { "/QOpenSys/usr/bin/tar", "-D", isCreating ? "-cvf" : "-uvf", tarFile.getName(), file.getAbsolutePath() }, new String[] { "QIBM_PASE_DESCRIPTOR_STDIO=B" }, m_dir);
-                ProcessLauncher.pipeStreamsToCurrentProcess("TAR", p, m_logger);
-                if(0 !=p.waitFor()) {
-                    throw new IOException("Error packaging stream files");
+        Map<String, Set<File>> fileGroups = new LinkedHashMap<>();
+        fileGroups.put("files.tar", m_files);
+        fileGroups.put("filesIfMissing.tar", m_files_if_missing);
+        for (Map.Entry<String, Set<File>> entry : fileGroups.entrySet()) {
+            String tarName = entry.getKey();
+            Set<File> files = entry.getValue();
+
+            if (!files.isEmpty()) {
+                m_logger.println("Saving stream files...");
+                final File tarFile = new File(m_dir, tarName);
+                boolean isCreating = true;
+                for (final File file : files) {
+                    m_logger.printfln_verbose("Packaging file '%s'...", file.getAbsolutePath());
+                    final Process p = Runtime.getRuntime()
+                            .exec(new String[] { "/QOpenSys/usr/bin/tar", "-D", isCreating ? "-cvf" : "-uvf",
+                                    tarFile.getName(), file.getAbsolutePath() },
+                                    new String[] { "QIBM_PASE_DESCRIPTOR_STDIO=B" }, m_dir);
+                    ProcessLauncher.pipeStreamsToCurrentProcess("TAR", p, m_logger);
+                    if (0 != p.waitFor()) {
+                        throw new IOException("Error packaging stream files");
+                    }
+                    isCreating = false;
                 }
-                isCreating = false;
-            }
-            manifestFiles.add(tarFile.getName());
-            // Assume lodrun installs files
-            if (m_lodrunLib==null) {
-            	final String untarCmd = "/QOpenSys/usr/bin/tar xvf files.tar -C /.";
-	            manifestCommands.add(untarCmd);
+                manifestFiles.add(tarFile.getName());
+                // Assume lodrun installs files
+                if (m_lodrunLib == null) {
+                    final String untarCmd = "/QOpenSys/usr/bin/tar xvf " + tarName + " -C /.";
+                    manifestCommands.add(untarCmd);
+                }
             }
         }
 
@@ -250,36 +283,50 @@ public class InstallPackageBuilder {
                 runCommand(as400, "CRTSAVF QTEMP/" + library, false);
                 runCommand(as400, "SAVLIB LIB(" + library + ") DEV(*SAVF) SAVF(QTEMP/" + library + ")", false);
                 final File stmf = new File(m_dir, library + ".lib");
-                runCommand(as400, "CPYTOSTMF FROMMBR('/qsys.lib/qtemp.lib/" + library + ".file') TOSTMF('" + stmf.getAbsolutePath() + "') STMFOPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED)", false);
+                runCommand(as400,
+                        "CPYTOSTMF FROMMBR('/qsys.lib/qtemp.lib/" + library + ".file') TOSTMF('"
+                                + stmf.getAbsolutePath() + "') STMFOPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED)",
+                        false);
                 manifestFiles.add(stmf.getName());
-                
+
                 manifestCommands.add("CRTSAVF QTEMP/" + library);
-                manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + stmf.getName() + "') TOMBR('/qsys.lib/qtemp.lib/" + library + ".file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
+                manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + stmf.getName() + "') TOMBR('/qsys.lib/qtemp.lib/"
+                        + library + ".file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
                 // Assume lodrun installs libraries
-                if (m_lodrunLib==null) {
-	                // TODO: conditionally DLTLIB first
-	                manifestCommands.add("DLTLIB " + library);
-	                manifestCommands.add("RSTLIB SAVLIB(" + library + ") DEV(*SAVF) SAVF(QTEMP/" + library + ") MBROPT(*ALL) ALWOBJDIF(*ALL) RSTLIB(" + library + ")");
+                if (m_lodrunLib == null) {
+                    // TODO: conditionally DLTLIB first
+                    manifestCommands.add("DLTLIB " + library);
+                    manifestCommands.add("RSTLIB SAVLIB(" + library + ") DEV(*SAVF) SAVF(QTEMP/" + library
+                            + ") MBROPT(*ALL) ALWOBJDIF(*ALL) RSTLIB(" + library + ")");
                 }
             }
-            
+
             // Create LODRUN QINSTAPP save file
             if (m_lodrunLib != null) {
                 m_logger.printfln("Creating QINSTAPP save file...");
                 runCommand(as400, "CRTSAVF QTEMP/QINSTAPP", false);
-            	// SAVOBJ/RSTOBJ QINSTAPP to QTEMP if needed (instead of CRTDUPOBJ to preserve attributes)
+                // SAVOBJ/RSTOBJ QINSTAPP to QTEMP if needed (instead of CRTDUPOBJ to preserve
+                // attributes)
                 if (!"QTEMP".equalsIgnoreCase(m_lodrunLib)) {
-                    runCommand(as400, "SAVOBJ OBJ(QINSTAPP) OBJTYPE(*PGM) DEV(*SAVF) SAVF(QTEMP/QINSTAPP) LIB(" + m_lodrunLib + ')', false);
-                    runCommand(as400, "RSTOBJ OBJ(QINSTAPP) OBJTYPE(*PGM) DEV(*SAVF) SAVF(QTEMP/QINSTAPP) RSTLIB(QTEMP) ALWOBJDIF(*ALL) MBROPT(*ALL) SAVLIB(" + m_lodrunLib + ')', false);
+                    runCommand(as400, "SAVOBJ OBJ(QINSTAPP) OBJTYPE(*PGM) DEV(*SAVF) SAVF(QTEMP/QINSTAPP) LIB("
+                            + m_lodrunLib + ')', false);
+                    runCommand(as400,
+                            "RSTOBJ OBJ(QINSTAPP) OBJTYPE(*PGM) DEV(*SAVF) SAVF(QTEMP/QINSTAPP) RSTLIB(QTEMP) ALWOBJDIF(*ALL) MBROPT(*ALL) SAVLIB("
+                                    + m_lodrunLib + ')',
+                            false);
                     runCommand(as400, "CLRSAVF QTEMP/QINSTAPP", false);
                 }
-                runCommand(as400, "SAVOBJ OBJ(QINSTAPP) OBJTYPE(*PGM) DEV(*SAVF) SAVF(QTEMP/QINSTAPP) LIB(QTEMP)", false);;
+                runCommand(as400, "SAVOBJ OBJ(QINSTAPP) OBJTYPE(*PGM) DEV(*SAVF) SAVF(QTEMP/QINSTAPP) LIB(QTEMP)",
+                        false);
+                ;
                 final File stmf = new File(m_dir, "qinstapp.pgm");
-                runCommand(as400, "CPYTOSTMF FROMMBR('/qsys.lib/qtemp.lib/qinstapp.file') TOSTMF('" + stmf.getAbsolutePath() + "') CVTDTA(*NONE) ENDLINFMT(*FIXED)", false);
+                runCommand(as400, "CPYTOSTMF FROMMBR('/qsys.lib/qtemp.lib/qinstapp.file') TOSTMF('"
+                        + stmf.getAbsolutePath() + "') CVTDTA(*NONE) ENDLINFMT(*FIXED)", false);
                 manifestFiles.add(stmf.getName());
-                
+
                 manifestCommands.add("CRTSAVF QTEMP/QINSTAPP");
-                manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + stmf.getName() + "') TOMBR('/qsys.lib/qtemp.lib/qinstapp.file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
+                manifestCommands.add("CPYFRMSTMF FROMSTMF('$PWD/" + stmf.getName()
+                        + "') TOMBR('/qsys.lib/qtemp.lib/qinstapp.file') MBROPT(*REPLACE) CVTDTA(*NONE) ENDLINFMT(*FIXED) TABEXPN(*NO)");
                 manifestCommands.add("LODRUN DEV(*SAVF) SAVF(QTEMP/QINSTAPP)");
             }
         } finally {
@@ -321,10 +368,10 @@ public class InstallPackageBuilder {
             m_logger.println_verbose("done adding our manifest");
 
             // add pre/post install scripts
-            if(preInstall != null) {
+            if (preInstall != null) {
                 manifestFiles.add(preInstall.getName());
             }
-            if(postInstall != null) {
+            if (postInstall != null) {
                 manifestFiles.add(postInstall.getName());
             }
 
@@ -342,7 +389,8 @@ public class InstallPackageBuilder {
         }
     }
 
-    private void runCommand(final AS400 _as400, final String _cmd, final boolean _isOkToFail) throws IOException, ObjectDoesNotExistException, PropertyVetoException {
+    private void runCommand(final AS400 _as400, final String _cmd, final boolean _isOkToFail)
+            throws IOException, ObjectDoesNotExistException, PropertyVetoException {
         runCommand(m_logger, _as400, _cmd, _isOkToFail);
     }
 
