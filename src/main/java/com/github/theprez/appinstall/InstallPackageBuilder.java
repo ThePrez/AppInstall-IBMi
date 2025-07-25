@@ -46,11 +46,7 @@ import com.ibm.as400.access.ObjectDoesNotExistException;
 import com.ibm.as400.access.QueuedMessage;
 
 public class InstallPackageBuilder {
-    static synchronized void runCommand(final AppLogger _logger, final AS400 _as400, final String _cmd,
-            final boolean _isOkToFail) throws IOException, ObjectDoesNotExistException, PropertyVetoException { // TODO:
-                                                                                                                // where
-                                                                                                                // should
-                                                                                                                // this
+    static synchronized void runCommand(final AppLogger _logger, final AS400 _as400, final String _cmd, final boolean _isOkToFail) throws IOException, ObjectDoesNotExistException, PropertyVetoException { // TODO: where should this
         // live?
         try {
             _logger.printfln_verbose("Running CL command '%s'", _cmd);
